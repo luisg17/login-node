@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { AuthService } from '../services/auth.service';
+import { AuthService } from '../../adapters/services/auth.service';
 import { regularExps } from '../../../config';
 import { CustomError } from '../../validations/errors/custom.error';
 import { UserEntity } from '../../entities/user.entity';
@@ -35,18 +35,24 @@ export class AuthController {
   loginUser = async (req: Request, res: Response) => {
     try {
       const apiKey = req.headers['x-api-key'] as string | undefined;
+      const duration = req.headers['x-expiracion'] as string ;
+
+      console.log(duration);
+
       if (!apiKey) {
         return res.status(403).json({ error: 'API key is required' });
       }
 
+
       await this.authService.validateApiKey(apiKey);
+      await this.authService.validateExpiration(duration);
 
       const { email, password } = req.body;
       if (!email) return res.status(400).json({ error: 'El correo es requerido' });
       if (!regularExps.email.test(email)) return res.status(400).json({ error: 'El correo no es válido' });
       if (!password) return res.status(400).json({ error: 'La contraseña es requerida' });
 
-      const user = await this.authService.loginUser(new UserEntity(email, password));
+      const user = await this.authService.loginUser(new UserEntity(email, password), duration);
       res.json(user);
     } catch (error) {
       this.handleError(error, res);
