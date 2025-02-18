@@ -51,7 +51,6 @@ export class AuthService {
   }
 
   public async loginUser( UserEntity: UserEntity) {
-
     const user = await UserModel.findOne({ email: UserEntity.email });
     if (!user) throw CustomError.badRequest('El correo no existe');
 

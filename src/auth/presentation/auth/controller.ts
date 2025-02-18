@@ -46,7 +46,7 @@ export class AuthController {
       if (!regularExps.email.test(email)) return res.status(400).json({ error: 'El correo no es válido' });
       if (!password) return res.status(400).json({ error: 'La contraseña es requerida' });
 
-      const user = await this.authService.loginUser(new UserEntity('', '', email, false, password, []));
+      const user = await this.authService.loginUser(new UserEntity(email, password));
       res.json(user);
     } catch (error) {
       this.handleError(error, res);
