@@ -1,33 +1,31 @@
 import { JwtAdapter, bcryptAdapter } from '../../../config';
 import { UserModel } from '../../../data';
-import { CustomError, RegisterUserDto, User, UserEntity } from '../../../domain';
+import { CustomError } from '../../validations/errors/custom.error';
+import { UserEntity } from '../../entities/user.entity';
 import { envs } from '../../../config';
-
-
 
 export class AuthService {
 
-  // DI
   constructor() {}
 
 
-  public async registerUser( registerUserDto: RegisterUserDto ) {
+  public async registerUser( UserEntity: UserEntity ) {
 
-    const existUser = await UserModel.findOne({ email: registerUserDto.email });
+    const existUser = await UserModel.findOne({ email: UserEntity.email });
     if ( existUser ) throw CustomError.badRequest('El correo ya existe');
 
     try {
-      const user = new UserModel(registerUserDto);
+      const user = new UserModel(UserEntity);
       
       // Encriptar la contraseña
-      user.password = bcryptAdapter.hash( registerUserDto.password );
+      user.password = bcryptAdapter.hash( UserEntity.password );
       
       await user.save();
       // JWT <---- para mantener la autenticación del usuario
 
       // Email de confirmación
 
-      const { password, ...userEntity } = UserEntity.fromObject(user);
+      const { password, ...userEntity } = UserEntity;
 
 
       return { 
@@ -52,16 +50,16 @@ export class AuthService {
     }
   }
 
-  public async loginUser( User: User) {
+  public async loginUser( UserEntity: UserEntity) {
 
-    const user = await UserModel.findOne({ email: User.email });
+    const user = await UserModel.findOne({ email: UserEntity.email });
     if (!user) throw CustomError.badRequest('El correo no existe');
 
-    const isMatching = bcryptAdapter.compare( User.password, user.password );
+    const isMatching = bcryptAdapter.compare( UserEntity.password, user.password );
     if ( !isMatching ) throw CustomError.badRequest('La contrasena no es valida');
 
 
-    const { password, ...userEntity} = UserEntity.fromObject( user );
+    const { password, ...userEntity} = UserEntity;
     
     const token = await JwtAdapter.generateToken({ id: user.id, email: user.email });
     if ( !token ) throw CustomError.internalServer('Error al crear token');
