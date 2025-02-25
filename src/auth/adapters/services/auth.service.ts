@@ -1,141 +1,85 @@
 import { JwtAdapter, bcryptAdapter } from '../../../config';
-import { UserModel } from '../../../data';
 import { CustomError } from '../../validations/errors/custom.error';
-import { UserEntity } from '../../entities/user.entity';
 import { envs } from '../../../config';
+import { User, UserRepository } from '../../../data/mongo/models/user.model';
 
 export class AuthService {
-
-  constructor() {}
-
-
-  public async registerUser( UserEntity: UserEntity ) {
-
-    const existUser = await UserModel.findOne({ email: UserEntity.email });
-    if ( existUser ) throw CustomError.badRequest('El correo ya existe');
-
-    try {
-      const user = new UserModel(UserEntity);
-      
-      // Encriptar la contraseña
-      user.password = bcryptAdapter.hash( UserEntity.password );
-      
-      await user.save();
-      // JWT <---- para mantener la autenticación del usuario
-
-      // Email de confirmación
-
-      const { password, ...userEntity } = UserEntity;
-
-
-      return { 
-        user: userEntity, 
-        token: 'ABC' 
-      };
-
-    } catch (error) {
-      throw CustomError.internalServer(`${ error }`);
-    }
-
-  }
+  private userRepository: UserRepository;
   private readonly VALID_API_KEY = envs.API_KEY;
 
-  public validateApiKey(apiKey: string | undefined) {
-    if (!apiKey) {
-      throw CustomError.badRequest('el Api key es requerido');
-    }
-    
-    if (apiKey !== this.VALID_API_KEY) {
-      throw CustomError.badRequest('Api key no valido');
+  constructor(userRepository: UserRepository) {
+    this.userRepository = userRepository;
+  }
+
+  public async registerUser(userData: Omit<User, '_id'>) {
+    const existUser = await this.userRepository.findByEmail(userData.email);
+    if (existUser) throw CustomError.badRequest('El correo ya existe');
+
+    try {
+      // Encriptar la contraseña antes de guardarla
+      userData.password = bcryptAdapter.hash(userData.password);
+
+      const user = await this.userRepository.create(userData);
+
+      // Generar el token
+      const token = await JwtAdapter.generateToken({ id: user._id, email: user.email });
+
+      // Omitir la contraseña en la respuesta
+      const { password, ...userEntity } = user;
+
+      return {
+        user: userEntity,
+        token
+      };
+    } catch (error) {
+      throw CustomError.internalServer(`${error}`);
     }
   }
-  
-  public validateExpiration(expiration: string) {
-    const regex = /^(\d{1,2}d\s*)?(\d{1,2}h\s*)?(\d{1,2}m\s*)?$/;
-    if (!regex.test(expiration)) {
-        throw CustomError.badRequest(
-            'El formato de duración no es válido. Por favor, use combinaciones como:\n' +
-            '- "1d" para 1 día\n' +
-            '- "3h" para 3 horas\n' +
-            '- "25m" para 25 minutos\n' +
-            '- "1d 3h 25m" para combinaciones'
-        );
-    }
 
-    let days = 0;
-    let hours = 0;
-    let minutes = 0;
-
-    const dayMatch = expiration.match(/(\d{1,2})d/);
-    const hourMatch = expiration.match(/(\d{1,2})h/);
-    const minuteMatch = expiration.match(/(\d{1,2})m/);
-
-    if (dayMatch) {
-        days = parseInt(dayMatch[1], 10);
-    }
-    if (hourMatch) {
-        hours = parseInt(hourMatch[1], 10);
-    }
-    if (minuteMatch) {
-        minutes = parseInt(minuteMatch[1], 10);
-    }
-
-    if (days === 0 && hours === 0 && minutes === 0) {
-        throw CustomError.badRequest(
-            'Debe especificar al menos una unidad de tiempo. Por ejemplo:\n' +
-            '- Días (1d, 2d, etc.)\n' +
-            '- Horas (1h, 2h, etc.)\n' +
-            '- Minutos (1m, 2m, etc.)'
-        );
-    }
-
-    if (days < 0 || days > 730) {
-        throw CustomError.badRequest(
-            'La duración máxima no puede exceder 2 años (730 días).\n' +
-            `Días especificados: ${days}`
-        );
-    }
-
-    if (hours < 0 || hours > 23) {
-        throw CustomError.badRequest(
-            'Las horas deben estar entre 0 y 23.\n' +
-            `Horas especificadas: ${hours}`
-        );
-    }
-
-    if (minutes < 0 || minutes > 59) {
-        throw CustomError.badRequest(
-            'Los minutos deben estar entre 0 y 59.\n' +
-            `Minutos especificados: ${minutes}`
-        );
-    }
-
-    return {
-        days,
-        hours,
-        minutes,
-    };
-}
-
-
-  public async loginUser( UserEntity: UserEntity, duration: string) {
-    const user = await UserModel.findOne({ email: UserEntity.email });
+  public async loginUser(email: string, password: string, duration: string) {
+    const user = await this.userRepository.findByEmail(email);
     if (!user) throw CustomError.badRequest('El correo no existe');
 
-    const isMatching = bcryptAdapter.compare( UserEntity.password, user.password );
-    if ( !isMatching ) throw CustomError.badRequest('La contrasena no es valida');
+    const isMatching = bcryptAdapter.compare(password, user.password);
+    if (!isMatching) throw CustomError.badRequest('La contraseña no es válida');
 
+    const token = await JwtAdapter.generateToken({ id: user._id, email: user.email }, duration);
+    if (!token) throw CustomError.internalServer('Error al crear token');
 
-    const { password, ...userEntity} = UserEntity;
-    
-    const token = await JwtAdapter.generateToken({ id: user.id, email: user.email ,}, duration);
-    if ( !token ) throw CustomError.internalServer('Error al crear token');
+    const { password: _, ...userEntity } = user;
 
     return {
       user: userEntity,
-      token: token,
-    }
+      token
+    };
   }
 
+  public validateApiKey(apiKey: string | undefined) {
+    if (!apiKey) throw CustomError.badRequest('El API key es requerido');
+    if (apiKey !== this.VALID_API_KEY) throw CustomError.badRequest('API key no válida');
+  }
 
+  public validateExpiration(expiration: string) {
+    const regex = /^(\d{1,2}d\s*)?(\d{1,2}h\s*)?(\d{1,2}m\s*)?$/;
+    if (!regex.test(expiration)) {
+      throw CustomError.badRequest(
+        'Formato de duración inválido. Use combinaciones como "1d", "3h", "25m", "1d 3h 25m".'
+      );
+    }
+
+    let days = 0, hours = 0, minutes = 0;
+
+    expiration.match(/(\d{1,2})d/)?.[1] && (days = parseInt(expiration.match(/(\d{1,2})d/)![1], 10));
+    expiration.match(/(\d{1,2})h/)?.[1] && (hours = parseInt(expiration.match(/(\d{1,2})h/)![1], 10));
+    expiration.match(/(\d{1,2})m/)?.[1] && (minutes = parseInt(expiration.match(/(\d{1,2})m/)![1], 10));
+
+    if (days === 0 && hours === 0 && minutes === 0) {
+      throw CustomError.badRequest('Debe especificar al menos una unidad de tiempo.');
+    }
+    if (days > 730) throw CustomError.badRequest('Duración máxima: 2 años (730 días).');
+    if (hours > 23) throw CustomError.badRequest('Las horas deben estar entre 0 y 23.');
+    if (minutes > 59) throw CustomError.badRequest('Los minutos deben estar entre 0 y 59.');
+
+    return { days, hours, minutes };
+  }
 }
